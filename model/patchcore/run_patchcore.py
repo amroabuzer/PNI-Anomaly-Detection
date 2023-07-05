@@ -357,7 +357,7 @@ def dataset(
     def get_dataloaders(seed):
         dataloaders = []
         for subdataset in subdatasets:
-            train_dataset = TrainDataset()
+            train_dataset = TrainDataset(data_path, name, train_val_split, 0, seed, augment , imagesize)
             # train_dataset = tr_dataset_library.__dict__[dataset_info[1]](
             #     data_path,
             #     classname=subdataset,
@@ -369,14 +369,15 @@ def dataset(
             #     augment=augment,
             # )
 
-            test_dataset = dataset_library.__dict__[dataset_info[1]](
-                data_path,
-                classname=subdataset,
-                resize=resize,
-                imagesize=imagesize,
-                split=dataset_library.DatasetSplit.TEST,
-                seed=seed,
-            )
+            test_dataset = TestDataset(os.path.join(data_path), )
+            # test_dataset = dataset_library.__dict__[dataset_info[1]](
+            #     data_path,
+            #     classname=subdataset,
+            #     resize=resize,
+            #     imagesize=imagesize,
+            #     split=dataset_library.DatasetSplit.TEST,
+            #     seed=seed,
+            # )
 
             train_dataloader = torch.utils.data.DataLoader(
                 train_dataset,
