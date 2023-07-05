@@ -1623,3 +1623,10 @@ data/splits/sinus.csv
 data/splits/wml_ann.csv
 data/splits/wml_neg.csv
 data/splits/wml.csv
+model/patchcore/__pycache__/backbones.cpython-310.pyc
+model/patchcore/__pycache__/common.cpython-310.pyc
+model/patchcore/__pycache__/metrics.cpython-310.pyc
+model/patchcore/__pycache__/patchcore.cpython-310.pyc
+model/patchcore/__pycache__/run_patchcore.cpython-310.pyc
+model/patchcore/__pycache__/sampler.cpython-310.pyc
+model/patchcore/__pycache__/utils.cpython-310.pyc

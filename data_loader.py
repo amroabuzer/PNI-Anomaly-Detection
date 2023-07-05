@@ -10,7 +10,7 @@ from torchvision import transforms
 
 class TrainDataset(Dataset):
 
-    def __init__(self, data: List[str], target_size=(128, 128)):
+    def __init__(self, data: List[str], classname,  train_val_split , split, seed, augment, target_size=(128, 128)):
         """
         Loads images from data
 
@@ -22,6 +22,13 @@ class TrainDataset(Dataset):
         super(TrainDataset, self).__init__()
         self.target_size = target_size
         self.data = data
+        self.classname = classname
+        self.train_val_split = train_val_split
+        self.split = split
+        self.seed = seed
+        self.augment = augment
+        
+        
 
     def __len__(self):
         return len(self.data)
