@@ -10,7 +10,7 @@ from torchvision import transforms
 
 class TrainDataset(Dataset):
 
-    def __init__(self, data: List[str], classname,  train_val_split , split, seed, augment, target_size=(128, 128)):
+    def __init__(self, data: List[str], classname, target_size=(128, 128)):
         """
         Loads images from data
 
@@ -20,13 +20,13 @@ class TrainDataset(Dataset):
             the desired output size
         """
         super(TrainDataset, self).__init__()
-        self.target_size = target_size
+        self.target_size = (128, 128)
         self.data = data
         self.classname = classname
-        self.train_val_split = train_val_split
-        self.split = split
-        self.seed = seed
-        self.augment = augment
+        self.train_val_split = 0
+        self.split = 0
+        self.seed = 0
+        self.augment = 0
         
         
 
@@ -35,13 +35,14 @@ class TrainDataset(Dataset):
 
     def __getitem__(self, idx):
         # Load image
-        img = Image.open(self.data[idx]).convert('L')
+        img = Image.open(self.data[idx]).convert('RGB')
         # Pad to square
         img = transforms.Pad(((img.height - img.width) // 2, 0), fill=0)(img)
         # Resize
         img = img.resize(self.target_size, Image.BICUBIC)
         # Convert to tensor
         img = transforms.ToTensor()(img)
+        # print(img.size)
 
         return img
 
@@ -60,8 +61,10 @@ class TrainDataModule(pl.LightningDataModule):
         """
         super(TrainDataModule, self).__init__()
         self.target_size = target_size
+        self.input_size = (3, target_size[0], target_size[1])
         self.batch_size = batch_size
-
+        self.name = "training mri images"
+        
         train_csv_ixi = os.path.join(split_dir, 'ixi_normal_train.csv')
         train_csv_fastMRI = os.path.join(split_dir, 'normal_train.csv')
         val_csv = os.path.join(split_dir, 'normal_val.csv')
@@ -119,17 +122,17 @@ class TestDataset(Dataset):
 
     def __getitem__(self, idx):
         # Load image
-        img = Image.open(self.img_paths[idx]).convert('L')
+        img = Image.open(self.img_paths[idx]).convert('RGB')
         img = img.resize(self.target_size, Image.BICUBIC)
         img = transforms.ToTensor()(img)
 
         # Load positive mask
-        pos_mask = Image.open(self.pos_mask_paths[idx]).convert('L')
+        pos_mask = Image.open(self.pos_mask_paths[idx]).convert('RGB')
         pos_mask = pos_mask.resize(self.target_size, Image.NEAREST)
         pos_mask = transforms.ToTensor()(pos_mask)
 
         # Load negative mask
-        neg_mask = Image.open(self.neg_mask_paths[idx]).convert('L')
+        neg_mask = Image.open(self.neg_mask_paths[idx]).convert('RGB')
         neg_mask = neg_mask.resize(self.target_size, Image.NEAREST)
         neg_mask = transforms.ToTensor()(neg_mask)
 
