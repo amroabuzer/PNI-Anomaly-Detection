@@ -139,7 +139,6 @@ class PatchCore(torch.nn.Module):
         # sized features, these are brought into the correct form here.
         features = self.forward_modules["preprocessing"](features)
         features = self.forward_modules["preadapt_aggregator"](features)
-
         if provide_patch_shapes:
             return _detach(features), patch_shapes
         return _detach(features)
@@ -158,6 +157,7 @@ class PatchCore(torch.nn.Module):
 
         def _image_to_features(input_image):
             with torch.no_grad():
+                # print(np.shape(input_image))
                 input_image = input_image.to(torch.float).to(self.device)
                 return self._embed(input_image)
 
@@ -169,10 +169,14 @@ class PatchCore(torch.nn.Module):
                 if isinstance(image, dict):
                     image = image["image"]
                 features.append(_image_to_features(image))
+                # print(np.shape(_image_to_features(image)))
 
         features = np.concatenate(features, axis=0)
         features = self.featuresampler.run(features)
 
+        print(np.shape(features))
+        
+        
         self.anomaly_scorer.fit(detection_features=[features])
 
     def predict(self, data):
