@@ -76,18 +76,23 @@ class Evaluator:
                 nr_batches, nr_slices, width, height = inputs.shape
                 neg_masks[neg_masks>0.5] = 1
                 neg_masks[neg_masks<1] = 0
-                results = self.model.detect_anomaly(inputs)
-                reconstructions = results['reconstruction']
-                anomaly_maps = results['anomaly_map']
-                anomaly_scores = results['anomaly_score']
+                results = self.model.predict(inputs)
+                reconstructions = results[1]
+                anomaly_maps = results[1]
+                anomaly_scores = results[0]
 
                 for i in range(nr_batches):
                     count = str(idx * nr_batches + i)
                     x_i = inputs[i][0]
-                    x_rec_i = reconstructions[i][0] if reconstructions is not None else None
-                    ano_map_i = anomaly_maps[i][0].detach().numpy()
-                    mask_i = masks[i][0].cpu().detach().numpy()
-                    neg_mask_i = neg_masks[i][0].cpu().detach().numpy()
+                    # x_rec_i = reconstructions[i][0] if reconstructions is not None else None
+                    x_rec_i = None
+                    ano_map_i = anomaly_maps[i][0] if (len(anomaly_maps[i].shape) == 3) else anomaly_maps[i]
+                    # ano_map_i = anomaly_maps[i][0]
+                    # ano_map_i/=np.linalg.norm(ano_map_i)
+                    # print(ano_map_i)
+
+                    mask_i = masks[i][0].cpu().numpy() 
+                    neg_mask_i = neg_masks[i][0].cpu().numpy()
                     bboxes = cv2.cvtColor(neg_mask_i *255, cv2.COLOR_GRAY2RGB)
                     # thresh_gt = cv2.threshold((mask_*255).astype(np.uint8), 127, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
                     cnts_gt = cv2.findContours((mask_i *255).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -101,14 +106,14 @@ class Evaluator:
                     if x_rec_i is not None:
                         loss_l1 = self.criterion_rec(x_rec_i, x_i)
                         test_metrics['L1'].append(loss_l1.item())
-                        loss_lpips = np.squeeze(lpips_alex(x_i.cpu(), x_rec_i.cpu()).detach().numpy())
+                        loss_lpips = np.squeeze(lpips_alex(x_i.cpu(), x_rec_i.cpu()))
                         test_metrics['LPIPS'].append(loss_lpips)
                         #
-                        x_rec_i = x_rec_i.cpu().detach().numpy()
+                        x_rec_i = x_rec_i.cpu()
 
-                        ssim_ = ssim(x_rec_i, x_i.cpu().detach().numpy(), data_range=1.)
+                        ssim_ = ssim(x_rec_i, x_i.cpu(), data_range=1.)
                         test_metrics['SSIM'].append(ssim_)
-                    x_i = x_i.cpu().detach().numpy()
+                    x_i = x_i.cpu()
                     # print(np.sum(mask_))
                     x_pos = ano_map_i * mask_i
                     x_neg = ano_map_i * neg_mask_i
@@ -138,10 +143,10 @@ class Evaluator:
                     if int(count)==0:
                         if x_rec_i is None:
                             x_rec_i = np.zeros(x_i.shape)
-                        elements = [x_i, x_rec_i, ano_map_i, bboxes.astype(np.int64), x_pos, x_neg]
+                        elements = [x_i, ano_map_i/np.linalg.norm(ano_map_i) * 255, bboxes.astype(np.int64), x_pos, x_neg]
                         v_maxs = [1, 1, 0.99, 1, np.max(ano_map_i), np.max(ano_map_i)]
 
-                        titles = ['Input', 'Reconstruction', 'Anomaly Map', 'GT',
+                        titles = ['Input', 'Anomaly Map', 'GT',
                                   str(np.round(res_anomaly, 2)) + ', TP: ' + str(tp),
                                   str(np.round(res_healthy, 2)) + ', FP: ' + str(fp)]
 

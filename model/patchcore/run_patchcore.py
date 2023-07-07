@@ -109,7 +109,7 @@ def run(
                     )
                 )
                 for name in methods["names"]:
-                    scores, segmentations, labels_gt, masks_gt = PatchCore._predict_dataloader(
+                    scores, segmentations, labels_gt, masks_gt = PatchCore.predict(
                         dataloaders["testing"][name]
                     )
                     aggregator["pathologies"].append(name)

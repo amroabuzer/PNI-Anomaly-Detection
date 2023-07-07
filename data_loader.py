@@ -10,7 +10,7 @@ from torchvision import transforms
 
 class TrainDataset(Dataset):
 
-    def __init__(self, data: List[str], classname, target_size=(128, 128)):
+    def __init__(self, data: List[str], classname, target_size):
         """
         Loads images from data
 
@@ -20,7 +20,7 @@ class TrainDataset(Dataset):
             the desired output size
         """
         super(TrainDataset, self).__init__()
-        self.target_size = (128, 128)
+        self.target_size = (target_size[0], target_size[1])
         self.data = data
         self.classname = classname
         self.train_val_split = 0
@@ -43,15 +43,15 @@ class TrainDataset(Dataset):
         # Convert to tensor
         img = transforms.ToTensor()(img)
         # print(img.size)
+        img =transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])(img)
 
         return img
 
 
 class TrainDataModule(pl.LightningDataModule):
-    def __init__(self, split_dir: str, target_size=(128, 128), batch_size: int = 32):
+    def __init__(self, split_dir: str, target_size, batch_size: int = 32):
         """
         Data module for training
-
         @param split_dir: str
             path to directory containing the split files
         @param: target_size: tuple (int, int), default: (128, 128)
@@ -60,7 +60,8 @@ class TrainDataModule(pl.LightningDataModule):
             batch size
         """
         super(TrainDataModule, self).__init__()
-        self.target_size = target_size
+        self.target_size = (target_size[0], target_size[1])
+        print(self.target_size)
         self.input_size = (3, target_size[0], target_size[1])
         self.batch_size = batch_size
         self.name = "training mri images"
@@ -84,19 +85,19 @@ class TrainDataModule(pl.LightningDataModule):
               f"Using {len(val_files)} images for validation.")
 
     def train_dataloader(self):
-        return DataLoader(TrainDataset(self.train_data, self.target_size),
+        return DataLoader(TrainDataset(self.train_data,classname= "",target_size= self.target_size),
                           batch_size=self.batch_size,
                           shuffle=True)
 
     def val_dataloader(self):
-        return DataLoader(TrainDataset(self.val_data, self.target_size),
+        return DataLoader(TrainDataset(self.val_data,classname="", target_size=self.target_size),
                           batch_size=self.batch_size,
                           shuffle=False)
 
 
 class TestDataset(Dataset):
 
-    def __init__(self, img_csv: str, pos_mask_csv: str, neg_mask_csv: str, target_size=(128, 128)):
+    def __init__(self, img_csv: str, pos_mask_csv: str, neg_mask_csv: str, target_size):
         """
         Loads anomalous images, their positive masks and negative masks from data_dir
 
@@ -110,7 +111,7 @@ class TestDataset(Dataset):
             the desired output size
         """
         super(TestDataset, self).__init__()
-        self.target_size = target_size
+        self.target_size = (target_size[0], target_size[1])
         self.img_paths = pd.read_csv(img_csv)['filename'].tolist()
         self.pos_mask_paths = pd.read_csv(pos_mask_csv)['filename'].tolist()
         self.neg_mask_paths = pd.read_csv(neg_mask_csv)['filename'].tolist()
@@ -125,14 +126,15 @@ class TestDataset(Dataset):
         img = Image.open(self.img_paths[idx]).convert('RGB')
         img = img.resize(self.target_size, Image.BICUBIC)
         img = transforms.ToTensor()(img)
+        img = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])(img)
 
         # Load positive mask
-        pos_mask = Image.open(self.pos_mask_paths[idx]).convert('RGB')
+        pos_mask = Image.open(self.pos_mask_paths[idx])
         pos_mask = pos_mask.resize(self.target_size, Image.NEAREST)
         pos_mask = transforms.ToTensor()(pos_mask)
 
         # Load negative mask
-        neg_mask = Image.open(self.neg_mask_paths[idx]).convert('RGB')
+        neg_mask = Image.open(self.neg_mask_paths[idx])
         neg_mask = neg_mask.resize(self.target_size, Image.NEAREST)
         neg_mask = transforms.ToTensor()(neg_mask)
 
