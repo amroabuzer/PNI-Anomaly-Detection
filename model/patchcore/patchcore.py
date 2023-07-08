@@ -7,13 +7,36 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import tqdm
+import math
 
 import model.patchcore
 import model.patchcore.backbones
 import model.patchcore.common
 import model.patchcore.sampler
 
+import torch.nn as nn
+
 LOGGER = logging.getLogger(__name__)
+
+class MLP(nn.Module):
+    def __init__(self, input_size, hidden_size, num_layers, output_size):
+        super(MLP, self).__init__()
+        self.layers = nn.ModuleList()
+        self.layers.append(nn.Linear(input_size, hidden_size))
+        for _ in range(num_layers - 1):
+            self.layers.append( nn.Sequential(
+                nn.Linear(hidden_size, hidden_size),
+                nn.BatchNorm1d(hidden_size),  # Batch normalization
+                nn.ReLU(inplace=True)  # ReLU activation
+            ))
+        self.output_layer = nn.Linear(hidden_size, output_size)
+        
+    def forward(self, x):
+        for layer in self.layers:
+            x = torch.relu(layer(x))
+        output = self.output_layer(x)
+        return output
+    
 
 
 class PatchCore(torch.nn.Module):
@@ -21,6 +44,7 @@ class PatchCore(torch.nn.Module):
         """PatchCore anomaly detection class."""
         super(PatchCore, self).__init__()
         self.device = device
+        # self.model = MLP()
 
     def load(
         self,
@@ -41,6 +65,8 @@ class PatchCore(torch.nn.Module):
         self.layers_to_extract_from = layers_to_extract_from
         self.input_shape = input_shape
 
+        self.MLP = model
+        
         self.device = device
         self.patch_maker = PatchMaker(patchsize, stride=patchstride)
 
@@ -66,14 +92,21 @@ class PatchCore(torch.nn.Module):
 
         self.forward_modules["preadapt_aggregator"] = preadapt_aggregator
 
+
         self.anomaly_scorer = model.patchcore.common.NearestNeighbourScorer(
             n_nearest_neighbours=anomaly_score_num_nn, nn_method=nn_method
         )
-
+        
+        self.dist_scorer = model.patchcore.common.NearestNeighbourScorer(
+            n_nearest_neighbours=anomaly_score_num_nn, nn_method=nn_method
+        )
+        
         self.anomaly_segmentor = model.patchcore.common.RescaleSegmentor(
             device=self.device, target_size=input_shape[-2:]
         )
+        
 
+        
         self.featuresampler = featuresampler
 
     def embed(self, data):
@@ -157,7 +190,6 @@ class PatchCore(torch.nn.Module):
 
         def _image_to_features(input_image):
             with torch.no_grad():
-                # print(np.shape(input_image))
                 input_image = input_image.to(torch.float).to(self.device)
                 return self._embed(input_image)
 
@@ -169,21 +201,144 @@ class PatchCore(torch.nn.Module):
                 if isinstance(image, dict):
                     image = image["image"]
                 features.append(_image_to_features(image))
-                # print(np.shape(_image_to_features(image)))
 
         features = np.concatenate(features, axis=0)
         features = self.featuresampler.run(features)
-
         print(np.shape(features))
         
+        dist_features = self.featuresampler.run(features)
+        print(np.shape(dist_features))
         
         self.anomaly_scorer.fit(detection_features=[features])
+        self.dist_scorer.fit(detection_features=[dist_features])
+        
+        _,_,self.dist_to_ano_mapper = self.anomaly_scorer.predict(dist_features)
 
     def predict(self, data):
         if isinstance(data, torch.utils.data.DataLoader):
             return self._predict_dataloader(data)
         return self._predict(data)
 
+    def train_PNI(self, dataloader):
+        
+        train_dataloader = dataloader.train_dataloader()
+        val_dataloader = dataloader.val_dataloader()
+        
+        self.histogram = [[0 for x in range(self.dist_scorer.shape[0])] for x in range(784)]
+        # manually putting in 28^2 since 28^2 is the number of embeddings per pic (probably changes based on size of image)
+        
+        self.model = MLP(input_size=self.dist_scorer.shape[1] * 8,
+                         hidden_size=2048,
+                         num_layers=10,
+                         output_size=self.dist_scorer.shape[0])
+        
+        self.model.train()
+        self.model.to(device=self.device)
+        optim = optim.Adam(model.parameters(), lr=0.001)
+        epochs = 15
+        loss_fn = nn.CrossEntropyLoss()
+        val_epochs = 51
+        
+        with tqdm.tqdm(train_dataloader, desc="Inferring...", leave=False) as data_iterator:
+            
+            for epoch in range(epochs):
+                losses = []
+                accs = []
+                for image in data_iterator:
+                    
+                    image = image.to(torch.float).to(self.device)
+                    _ = self.forward_modules.eval()
+                    batchsize = image.shape[0]
+                    
+                    features, patch_shapes = self._embed(image, provide_patch_shapes=True)
+                    features = np.asarray(features)
+                    
+                    side_dim = math.sqrt(features[-1][0])
+                    embed_dim = features[-1][1]
+                    
+                    _, _ ,dist_idx = self.dist_scorer.predict([features])[0]
+                    
+                    ## I'm supposed to get a [b, 28, 28, 1024] here
+                    features = features.reshape(batchsize, side_dim, side_dim, embed_dim)
+                    
+                    
+                    #i goes from 1 -> 784 
+                    #idx goes from 0->num_coresets
+                    for i, idx in enumerate(dist_idx):  
+                        self.histogram[i][idx] += 1 
+                    
+                    #normalizing :)
+                    for i in range(len(self.histogram)):
+                        self.histogram[i] /= sum(self.histogram[i])
+                    
+                    dist_idx = dist_idx.reshape(batchsize, side_dim, side_dim)
+                    
+                    
+                    for row in range(1, side_dim-1):
+                        for col in range(1, side_dim-1):
+                            
+                            self.histogram[dist_idx[row, col]] += 1
+                            
+                            c_one_hot = torch.eye(1000)[dist_idx[row][col]]
+                            neighbors = features[:, row-1:row+2, col-1:col+2, :]
+                            
+                            # should contain all the features of neighbours minus the current row, col features
+                            cat_features = torch.cat(neighbors[0,:], neighbors[2,:], neighbors[1,1], neighbors[1,2], dim = 0)
+                            
+                            c_pred = self.model(cat_features)
+                            
+                            loss = loss_fn(c_pred, c_one_hot)
+                            
+                            loss.backward()
+                            optim.step()
+                            
+                            accuracy = (c_pred[np.max(c_pred)] == 1) - c_one_hot
+                            
+                            losses.append(loss)
+                            accs.append(accuracy)
+                            
+                print("loss: ", sum(loss)/len(loss))
+                print("accuracy:", sum(accs)/len(accs))
+        
+    def PNI_predict(self, image):
+        self.model.eval()
+        features, patch_shapes = self._embed(image, provide_patch_shapes=True)
+        
+        _, _ ,dist_idx = self.anomaly_scorer.predict([features])[0] # gives me the c_emb idx for each patch 
+        c_emb = self.anomaly_segmentor.detection_features[dist_idx] # c_emb based on idx found for each patch 
+        side_dim = math.sqrt(features[-1][0])
+        embed_dim = features[-1][1]
+        
+        features = features.reshape(image[0], side_dim, side_dim, embed_dim)
+        
+        for row in side_dim:
+            for col in side_dim:
+                neighbors = features[:, row-1:row+2, col-1:col+2, :]
+                            
+                # should contain all the features of neighbours minus the current row, col features
+                cat_features = torch.cat(neighbors[0,:], neighbors[2,:], neighbors[1,1], neighbors[1,2], dim = 0)
+                
+                # make sure we're outputting logits here
+                p_cN = self.model(cat_features)
+                
+                p_cx = self.histogram[row*side_dim + col]
+                
+                p_cOmega = p_cN * p_cx / 2
+                
+                # we have to map back to nn of c_dist i.e. to c_emb
+                # self.dist_to_ano_mapper should be the size of c_dist and contains 
+                # nn indices to c_emb for each c_dist
+                self.dist_to_ano_mapper
+                
+                p_cOmega_transformed = np.zeros()
+                
+                p_Phi_c = math.exp(-np.linalg.norm(features - c_emb))
+                
+                
+                            
+                
+
+        
     def _predict_dataloader(self, dataloader):
         """This function provides anomaly scores/maps for full dataloaders."""
         _ = self.forward_modules.eval()
@@ -195,10 +350,8 @@ class PatchCore(torch.nn.Module):
         with tqdm.tqdm(dataloader, desc="Inferring...", leave=False) as data_iterator:
             for image in data_iterator:
                 if isinstance(image, dict):
-                    # labels_gt.extend(image["is_anomaly"].numpy().tolist())
-                    labels_gt.extend([1].numpy().tolist())
-                    masks_gt.extend(image.pos_mask_paths.numpy().tolist())
-                    image = image.img
+                    image = image["dict"]
+                image, pos_mask, neg_mask = image
                 _scores, _masks = self._predict(image)
                 for score, mask in zip(_scores, _masks):
                     scores.append(score)

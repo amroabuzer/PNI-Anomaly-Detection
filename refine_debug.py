@@ -109,7 +109,7 @@ n1, f1 = sampler('approx_greedy_coreset', 0.1 )
 methods[n1] =f1
 # we also pick greedy_coreset because that is what PNI paper mentions
 # 0.1 is the default value according to documentation
-n2, f2 =patch_core(["resnet50"], ['layer2', 'layer3'], 128, 128, "mean", "mean", 5, 3, "max", 0.0, [], True, 8)
+n2, f2 =patch_core(["resnet50"], ['layer2', 'layer3'], 1024  , 1024  , "mean", "mean", 5, 3, "max", 0.0, [], True, 8)
 methods[n2] = f2
 # rest of values are just default 
 

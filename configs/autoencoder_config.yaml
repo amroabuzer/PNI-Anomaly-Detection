@@ -3,7 +3,7 @@ seed: 42
 split_dir: ./data/splits
 
 target_size: !<tag:yaml.org,2002:seq> [224,224]
-batch_size: 32
+batch_size: 1
 
 lr: 0.001
 num_epochs: 100

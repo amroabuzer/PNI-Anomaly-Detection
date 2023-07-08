@@ -47,11 +47,12 @@ class TrainDataset(Dataset):
             _, img, gt = self.train_transform(img)
         # Convert to tensor
         else:
-            img = (transforms.ToTensor(img))
-            gt = None
+            img = (transforms.ToTensor()(img))
+            img = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])(img)
+            return img
         # print(img.size)
-        img = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])(img)
 
+        img = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])(img)
         return img, gt
 
 
