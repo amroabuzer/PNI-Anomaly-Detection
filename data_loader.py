@@ -6,11 +6,11 @@ import pytorch_lightning as pl
 from PIL import Image
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
-
+import torch.nn as nn
 
 class TrainDataset(Dataset):
 
-    def __init__(self, data: List[str], classname, target_size):
+    def __init__(self, data: List[str], classname, target_size, train_transform = lambda x: x, cutpaste = False):
         """
         Loads images from data
 
@@ -27,6 +27,8 @@ class TrainDataset(Dataset):
         self.split = 0
         self.seed = 0
         self.augment = 0
+        self.train_transform = train_transform
+        self.cutpaste = cutpaste
         
         
 
@@ -39,17 +41,22 @@ class TrainDataset(Dataset):
         # Pad to square
         img = transforms.Pad(((img.height - img.width) // 2, 0), fill=0)(img)
         # Resize
-        img = img.resize(self.target_size, Image.BICUBIC)
+        img = img.resize(self.target_size, Image.BICUBIC)        
+        # CutPaste Transform
+        if self.cutpaste == True:
+            _, img, gt = self.train_transform(img)
         # Convert to tensor
-        img = transforms.ToTensor()(img)
+        else:
+            img = (transforms.ToTensor(img))
+            gt = None
         # print(img.size)
-        img =transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])(img)
+        img = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])(img)
 
-        return img
+        return img, gt
 
 
 class TrainDataModule(pl.LightningDataModule):
-    def __init__(self, split_dir: str, target_size, batch_size: int = 32):
+    def __init__(self, split_dir: str, target_size, batch_size: int = 32, train_transform = lambda x: x, cutpaste = False):
         """
         Data module for training
         @param split_dir: str
@@ -60,11 +67,13 @@ class TrainDataModule(pl.LightningDataModule):
             batch size
         """
         super(TrainDataModule, self).__init__()
+        self.train_transform = train_transform
         self.target_size = (target_size[0], target_size[1])
         print(self.target_size)
         self.input_size = (3, target_size[0], target_size[1])
         self.batch_size = batch_size
         self.name = "training mri images"
+        self.cutpaste = cutpaste
         
         train_csv_ixi = os.path.join(split_dir, 'ixi_normal_train.csv')
         train_csv_fastMRI = os.path.join(split_dir, 'normal_train.csv')
@@ -85,12 +94,12 @@ class TrainDataModule(pl.LightningDataModule):
               f"Using {len(val_files)} images for validation.")
 
     def train_dataloader(self):
-        return DataLoader(TrainDataset(self.train_data,classname= "",target_size= self.target_size),
+        return DataLoader(TrainDataset(self.train_data,classname= "",target_size= self.target_size, train_transform=self.train_transform, cutpaste= self.cutpaste),
                           batch_size=self.batch_size,
                           shuffle=True)
 
     def val_dataloader(self):
-        return DataLoader(TrainDataset(self.val_data,classname="", target_size=self.target_size),
+        return DataLoader(TrainDataset(self.val_data,classname="", target_size=self.target_size, train_transform=self.train_transform, cutpaste = self.cutpaste),
                           batch_size=self.batch_size,
                           shuffle=False)
 

@@ -18,21 +18,51 @@ from data_loader import TrainDataModule, get_all_test_dataloaders, get_test_data
 from model.patchcore.run_patchcore import dataset, run, patch_core, sampler
 from model.patchcore.patchcore import PatchCore
 from data_loader import TrainDataModule, get_all_test_dataloaders
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+from torch.utils.tensorboard import SummaryWriter
+from torchvision import transforms
+
+from tqdm import tqdm
+from model.cutpaste import CutPasteNormal,CutPasteScar, CutPaste3Way, CutPasteUnion, cut_paste_collate_fn
+from model.refinement_model import Refinement
+# from model.eval import eval_model
 
 with open('./configs/autoencoder_config.yaml', 'r') as f:
     config = yaml.safe_load(f)
+
+dummy_array = np.ones((1,1,224,224))
+
+after_cutpaste_transform = transforms.Compose([])
+after_cutpaste_transform.transforms.append(transforms.ToTensor())
+after_cutpaste_transform.transforms.append(transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                                                std=[0.229, 0.224, 0.225]))
+
+cutpaste_type = CutPasteNormal
+
+test_epochs = 10
+
+train_transform = transforms.Compose([])
+#train_transform.transforms.append(transforms.RandomResizedCrop(size, scale=(min_scale,1)))
+train_transform.transforms.append(transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0.1))
+# train_transform.transforms.append(transforms.GaussianBlur(int(size/10), sigma=(0.1,2.0)))
+train_transform.transforms.append(transforms.Resize(config['target_size']))
+train_transform.transforms.append(cutpaste_type(transform = after_cutpaste_transform))
+# train_transform.transforms.append(transforms.ToTensor())
+
 
 # Reproducibility
 pl.seed_everything(config['seed'])
 train_data_module = TrainDataModule(
     split_dir=config['split_dir'],
     target_size=config['target_size'],
-    batch_size=config['batch_size'])
+    batch_size=config['batch_size'],
+    train_transform=train_transform, 
+    cutpaste = True)
 
 test_dataloaders = get_all_test_dataloaders(config['split_dir'], config['target_size'], config['batch_size'])
 
 # Plot some images
-batch = next(iter(train_data_module.train_dataloader()))
+batch, gt = next(iter(train_data_module.train_dataloader()))
 
 # Print statistics
 print(f"Batch shape: {batch.shape}")
@@ -41,14 +71,14 @@ print(f"Batch max: {batch.max()}")
 
 img_num = min(5, batch.shape[0])
 
-fig, ax = plt.subplots(1, img_num, figsize=(15, img_num))
-if (img_num)>1:
-    for i in range(img_num):
-        ax[i].imshow(batch[i].squeeze().permute(1,2,0))
-        ax[i].axis('off')
-else:
-    ax.imshow(batch.squeeze().permute(1,2,0))
-    ax.axis('off')
+# fig, ax = plt.subplots(1, img_num, figsize=(15, img_num))
+# if (img_num)>1:
+#     for i in range(img_num):
+#         ax[i].imshow(batch[i].squeeze().permute(1,2,0))
+#         ax[i].axis('off')
+# else:
+#     ax.imshow(batch.squeeze().permute(1,2,0))
+#     ax.axis('off')
 plt.show()
 # we run the patchcore model
 
@@ -123,51 +153,122 @@ result_collect = []
 model.patchcore.utils.fix_seeds(seed, device)
 
 dataset_name = dataloaders["training"].name
-print("sanity check")
-print("name: " + dataset_name)
 
-with device_context:
-    torch.cuda.empty_cache()
-    imagesize = dataloaders["training"].input_size
-    sampler = methods["get_sampler"](
-        device,
-    )
-    PatchCore_list = methods["get_patchcore"](imagesize, sampler, device)
-    if len(PatchCore_list) > 1:
-        LOGGER.info(
-            "Utilizing PatchCore Ensemble (N={}).".format(len(PatchCore_list))
-        )
-    for i, PatchCore in enumerate(PatchCore_list):
-        torch.cuda.empty_cache()
-        if PatchCore.backbone.seed is not None:
-            model.patchcore.utils.fix_seeds(PatchCore.backbone.seed, device)
-        LOGGER.info(
-            "Training models ({}/{})".format(i + 1, len(PatchCore_list))
-        )
-        torch.cuda.empty_cache()
-        PatchCore.fit(dataloaders["training"].train_dataloader())
-        
-# Reconstructions from the validation set
-with device_context:
-    torch.cuda.empty_cache()
-    aggregator = {"pathologies": [], "scores": [], "segmentations": []}
-    for i, PatchCore in enumerate(PatchCore_list):
-        torch.cuda.empty_cache()
-        LOGGER.info(
-            "Embedding test data with models ({}/{})".format(
-                i + 1, len(PatchCore_list)
-            )
-        )
-        for name in methods["get_dataloaders"]["names"]:
-            scores, segmentations, labels_gt, masks_gt = PatchCore.predict(
-                dataloaders["testing"][name]
-            )
-            aggregator["pathologies"].append(name)
-            aggregator["scores"].append(scores)
-            aggregator["segmentations"].append(segmentations)
+num_classes = 2
+
+model = Refinement(config)
+
+model.to(torch.device('cuda'))
+
+def get_data_inf():
+    while True:
+        for out in enumerate(train_data_module.train_dataloader()):
+            yield out
+def get_val_inf():
+    while True:
+        for out in enumerate(train_data_module.val_dataloader()):
+            yield out
             
-from evaluate import Evaluator 
 
-evaluator = Evaluator(PatchCore, torch.device('cuda'), test_dataloaders)
+dataloader_inf =  get_data_inf()
+optimizer = model.configure_optimizers()
+loss_fn = lambda logits, y: model.loss_fn(logits, y)
 
-metrics, fig_metrics, fig_example = evaluator.evaluate()
+
+
+for step in tqdm(range(config['num_epochs'])):
+    epoch = int(step / 1)
+
+    batch_embeds = []
+    batch_idx, [data, gt] = next(dataloader_inf)
+    xs = [x.to(device) for x in data]
+    gts = [y.to(device) for y in gt]
+
+
+    # zero the parameter gradients
+    optimizer.zero_grad()
+    for i,x in enumerate(xs):
+      
+      if len(x.shape) == 3:
+        x = x[None,:,:,:]
+        
+      xc = dummy_array
+    #   xc = PatchCore.predict(x)
+      xc = torch.FloatTensor(xc).to(device)
+
+      if len(xc.shape) == 3:
+        xc = xc[None,:,:,:]
+
+      logits = model(x, xc)
+
+      y = gt[i]
+      loss = loss_fn(logits, y.cuda())
+
+      loss.backward()
+      optimizer.step()
+
+      if test_epochs > 0 and epoch % test_epochs == 0:
+          # run auc calculation
+          #TODO: create dataset only once.
+          #TODO: train predictor here or in the model class itself. Should not be in the eval part
+          #TODO: we might not want to use the training datat because of droupout etc. but it should give a indecation of the model performance???
+          # batch_embeds = torch.cat(batch_embeds)
+          # print(batch_embeds.shape)
+          model.eval()
+          _, [val_data, val_gt] = next(get_val_inf())
+          x_val = [x.to(device) for x in val_data]
+          val_gts = [y.to(device) for y in val_gt]
+          
+          tps, fps, tns, fns= 0, [], [], 0
+          precs, recs, f1s = [], [], []
+          for i, x in enumerate(x_val):
+            #   val_ano_map = PatchCore.predict(x)
+              val_ano_map = torch.FloatTensor(dummy_array).to(device)
+              if len(x.shape) == 3:
+                x = x[None,:,:,:]
+              
+              if len(val_ano_map.shape) == 3:
+                val_ano_map = val_ano_map[None,:,:,:]
+              
+              val_out = model(x, val_ano_map)
+              y = val_gts[i] 
+              neg_y = torch.where(y==1, 0, 1)
+              
+              x_pos = val_out * y
+              x_neg = val_out * neg_y
+              
+              x_pos = x_pos.detach().cpu().numpy()
+              x_neg = x_neg.detach().cpu().numpy()
+              
+              res_anomaly = np.sum(x_pos)
+              res_healthy = np.sum(x_neg)
+              
+              amount_anomaly = np.count_nonzero(x_pos)
+              amount_mask = np.count_nonzero(y.detach().cpu().numpy())
+              
+              tp = 1 if amount_anomaly > 0.1 * amount_mask else 0 ## 10% overlap due to large bboxes e.g. for enlarged ventricles
+              tps+= tp
+              fn = 1 if tp == 0 else 0
+              fns += fn
+  
+              fp = int(res_healthy / max(res_anomaly, 1))
+              fps.append(fp)
+              
+              precision = tp / max((tp+fp), 1)
+              f1 = 2 * (precision * tp) / (precision + tp + 1e-8)
+              recall = tp / (tp+fn)
+              
+              precs.append(precision)
+              recs.append(recall)
+              f1s.append(f1)
+              
+          print("************** Precision **************")
+          print(np.nanmean(np.array(precs)))
+          print()
+          print("**************  Recall  **************")
+          print(np.nanmean(np.array(recs)))
+          print()
+          print("**************    F1    **************")
+          print(np.nanmean(np.array(f1s)))
+          print()
+          model.train()

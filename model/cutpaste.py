@@ -2,6 +2,7 @@ import random
 import math
 from torchvision import transforms
 import torch 
+import PIL as Image
 
 def cut_paste_collate_fn(batch):
     # cutPaste return 2 tuples of tuples we convert them into a list of tuples
@@ -22,12 +23,12 @@ class CutPaste(object):
                                                       contrast = colorJitter,
                                                       saturation = colorJitter,
                                                       hue = colorJitter)
-    def __call__(self, org_img, img):
+    def __call__(self, org_img, img, gt):
         # apply transforms to both images
         if self.transform:
             img = self.transform(img)
             org_img = self.transform(org_img)
-        return org_img, img
+        return org_img, img, gt
     
 class CutPasteNormal(CutPaste):
     """Randomly copy one patche from the image and paste it somewere else.
@@ -44,6 +45,7 @@ class CutPasteNormal(CutPaste):
         #TODO: we might want to use the pytorch implementation to calculate the patches from https://pytorch.org/vision/stable/_modules/torchvision/transforms/transforms.html#RandomErasing
         h = img.size[0]
         w = img.size[1]
+        gt = torch.zeros((1,1,h,w))
         
         # ratio between area_ratio[0] and area_ratio[1]
         ratio_area = random.uniform(self.area_ratio[0], self.area_ratio[1]) * w * h
@@ -71,10 +73,11 @@ class CutPasteNormal(CutPaste):
         to_location_w = int(random.uniform(0, w - cut_w))
         
         insert_box = [to_location_w, to_location_h, to_location_w + cut_w, to_location_h + cut_h]
+        gt[0,0,to_location_h: to_location_h+cut_h, to_location_w: to_location_w + cut_w] = 1
         augmented = img.copy()
         augmented.paste(patch, insert_box)
         
-        return super().__call__(img, augmented)
+        return super().__call__(img, augmented, gt)
 
 class CutPasteScar(CutPaste):
     """Randomly copy one patche from the image and paste it somewere else.
