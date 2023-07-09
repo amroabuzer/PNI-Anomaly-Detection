@@ -204,15 +204,12 @@ class PatchCore(torch.nn.Module):
 
         features = np.concatenate(features, axis=0)
         features = self.featuresampler.run(features)
-        print(np.shape(features))
         
         dist_features = self.featuresampler.run(features)
-        print(np.shape(dist_features))
+        self.dist_to_ano_mapper = self.featuresampler._compute_greedy_coreset_indices(features)
         
         self.anomaly_scorer.fit(detection_features=[features])
         self.dist_scorer.fit(detection_features=[dist_features])
-        
-        _,_,self.dist_to_ano_mapper = self.anomaly_scorer.predict(dist_features)
 
     def predict(self, data):
         if isinstance(data, torch.utils.data.DataLoader):
@@ -222,15 +219,17 @@ class PatchCore(torch.nn.Module):
     def train_PNI(self, dataloader):
         
         train_dataloader = dataloader.train_dataloader()
-        val_dataloader = dataloader.val_dataloader()
         
-        self.histogram = [[0 for x in range(self.dist_scorer.shape[0])] for x in range(784)]
+        #for debugging only:
+        train_dataloader = dataloader.val_dataloader()
+        
+        self.histogram = [[0 for x in range(self.dist_scorer.detection_features.shape[0])] for x in range(784)]
         # manually putting in 28^2 since 28^2 is the number of embeddings per pic (probably changes based on size of image)
         
-        self.model = MLP(input_size=self.dist_scorer.shape[1] * 8,
+        self.model = MLP(input_size=self.dist_scorer.detection_features.shape[1] * 8,
                          hidden_size=2048,
                          num_layers=10,
-                         output_size=self.dist_scorer.shape[0])
+                         output_size=self.dist_scorer.detection_features.shape[0])
         
         self.model.train()
         self.model.to(device=self.device)
@@ -305,7 +304,7 @@ class PatchCore(torch.nn.Module):
         features, patch_shapes = self._embed(image, provide_patch_shapes=True)
         
         _, _ ,dist_idx = self.anomaly_scorer.predict([features])[0] # gives me the c_emb idx for each patch 
-        c_emb = self.anomaly_segmentor.detection_features[dist_idx] # c_emb based on idx found for each patch 
+        c_emb = np.take(self.anomaly_scorer.detection_features, dist_idx) # c_emb based on idx found for each patch 
         side_dim = math.sqrt(features[-1][0])
         embed_dim = features[-1][1]
         
@@ -313,6 +312,7 @@ class PatchCore(torch.nn.Module):
         
         for row in side_dim:
             for col in side_dim:
+                
                 neighbors = features[:, row-1:row+2, col-1:col+2, :]
                             
                 # should contain all the features of neighbours minus the current row, col features
@@ -328,17 +328,17 @@ class PatchCore(torch.nn.Module):
                 # we have to map back to nn of c_dist i.e. to c_emb
                 # self.dist_to_ano_mapper should be the size of c_dist and contains 
                 # nn indices to c_emb for each c_dist
+                
                 self.dist_to_ano_mapper
                 
-                p_cOmega_transformed = np.zeros()
+                p_cOmega_transformed = np.zeros(self.anomaly_scorer.detection_features.shape[0])
+                
+                p_cOmega_transformed = np.take(p_cOmega_transformed, self.dist_to_ano_mapper)
                 
                 p_Phi_c = math.exp(-np.linalg.norm(features - c_emb))
                 
+                patch_score = p_Phi_c * p_cOmega_transformed
                 
-                            
-                
-
-        
     def _predict_dataloader(self, dataloader):
         """This function provides anomaly scores/maps for full dataloaders."""
         _ = self.forward_modules.eval()
@@ -392,7 +392,10 @@ class PatchCore(torch.nn.Module):
     def save_to_path(self, save_path: str, prepend: str = "") -> None:
         LOGGER.info("Saving PatchCore data.")
         self.anomaly_scorer.save(
-            save_path, save_features_separately=False, prepend=prepend
+            save_path, save_features_separately=True, prepend= "orig_nn"
+        )
+        self.dist_scorer.save(
+            save_path, save_features_separately=True, prepend= "dist_nn"
         )
         patchcore_params = {
             "backbone.name": self.backbone.name,
@@ -428,7 +431,8 @@ class PatchCore(torch.nn.Module):
         del patchcore_params["backbone.name"]
         self.load(**patchcore_params, device=device, nn_method=nn_method)
 
-        self.anomaly_scorer.load(load_path, prepend)
+        self.anomaly_scorer.load(load_path, "orig_nn")
+        self.dist_scorer.load(load_path, "dist_nn")
 
 
 # Image handling classes.

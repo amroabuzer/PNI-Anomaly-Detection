@@ -11,6 +11,14 @@ class IdentitySampler:
         self, features: Union[torch.Tensor, np.ndarray]
     ) -> Union[torch.Tensor, np.ndarray]:
         return features
+    
+    def _compute_greedy_coreset_indices(self, features: torch.Tensor) -> np.ndarray:
+        """Returns indices of nn instead of full features
+
+        Args:
+            features: [NxD] input feature bank to sample.
+        """
+        return np.arange(np.shape(features)[0])
 
 
 class BaseSampler(abc.ABC):

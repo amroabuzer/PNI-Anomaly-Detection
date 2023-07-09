@@ -13,6 +13,7 @@ import model.patchcore.metrics
 import model.patchcore.patchcore
 import model.patchcore.sampler
 import model.patchcore.utils
+import pickle
 
 from data_loader import TrainDataModule, get_all_test_dataloaders, get_test_dataloader
 from model.patchcore.run_patchcore import dataset, run, patch_core, sampler
@@ -43,13 +44,15 @@ print(f"Batch max: {batch.max()}")
 img_num = min(5, batch.shape[0])
 print(img_num)
 
-fig, ax = plt.subplots(1, img_num, figsize=(15, img_num))
-for i in range(img_num):
-    ax[i].imshow(batch[i].squeeze().permute(1,2,0)) if img_num>1 else batch[i].permute(1,2,0)
-    ax[i].axis('off') if img_num>1 else ax.axis('off')
-# plt.show()
-plt.imshow(batch[i].permute(1,2,0))
-plt.show()
+plots = False
+if plots:
+    fig, ax = plt.subplots(1, img_num, figsize=(15, img_num))
+    for i in range(img_num):
+        ax[i].imshow(batch[i].squeeze().permute(1,2,0)) if img_num>1 else batch[i].permute(1,2,0)
+        ax[i].axis('off') if img_num>1 else ax.axis('off')
+    # plt.show()
+    plt.imshow(batch[i].permute(1,2,0))
+    plt.show()
 
 # we run the patchcore model
 
@@ -76,7 +79,7 @@ methods["get_dataloaders"] = {"training": train_data_module,
         'other'
     ]}
 
-n1, f1 = sampler('identity', 0.1 )
+n1, f1 = sampler('identity', 0.1)
 methods[n1] =f1
 # we also pick greedy_coreset because that is what PNI paper mentions
 # 0.1 is the default value according to documentation
@@ -123,7 +126,11 @@ dataset_name = dataloaders["training"].name
 print("sanity check")
 print("name: " + dataset_name)
 
-with device_context:
+train_patch = True
+file_path = os.path.join('saved_PatchCore', 'Debug_PatchCore')
+
+if train_patch:
+    # with device_context:
     torch.cuda.empty_cache()
     imagesize = dataloaders["training"].input_size
     sampler = methods["get_sampler"](
@@ -143,22 +150,17 @@ with device_context:
         )
         torch.cuda.empty_cache()
         PatchCore.fit(dataloaders["training"].train_dataloader())
-
-# Reconstructions from the validation set
-with device_context:
-    torch.cuda.empty_cache()
-    aggregator = {"pathologies": [], "scores": [], "segmentations": []}
+        
+    os.makedirs(file_path, exist_ok=True)
     for i, PatchCore in enumerate(PatchCore_list):
-        torch.cuda.empty_cache()
-        LOGGER.info(
-            "Embedding test data with models ({}/{})".format(
-                i + 1, len(PatchCore_list)
-            )
+        prepend = (
+            "Ensemble-{}-{}_".format(i + 1, len(PatchCore_list))
+            if len(PatchCore_list) > 1
+            else ""
         )
-        for name in methods["get_dataloaders"]["names"]:
-            scores, segmentations, labels_gt, masks_gt = PatchCore.predict(
-                dataloaders["testing"][name]
-            )
-            aggregator["pathologies"].append(name)
-            aggregator["scores"].append(scores)
-            aggregator["segmentations"].append(segmentations)
+        PatchCore.save_to_path(file_path, prepend)
+else:
+    nn_method = model.patchcore.common.FaissNN(False, 8)
+    patch_core = PatchCore(device)
+    patch_core.load_from_path(file_path, device, nn_method)
+    patch_core.train_PNI(dataloader=dataloaders["training"])
