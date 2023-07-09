@@ -256,10 +256,13 @@ class PatchCore(torch.nn.Module):
                     features, patch_shapes = self._embed(image, provide_patch_shapes=True)
                     features = np.asarray(features)
                     
-                    side_dim = int(math.sqrt(features.shape[0]))
+                    side_dim = patch_shapes[0][0]
                     embed_dim = features.shape[1]
                     
                     _, _ ,dist_idx = self.dist_scorer.predict([features])
+                    
+                    #reshape to get batch x features
+                    dist_idx = dist_idx.reshape(batchsize, side_dim**2)
                     
                     ## I'm supposed to get a [b, 28, 28, 1024] here
                     features = features.reshape(batchsize, side_dim, side_dim, embed_dim)
@@ -269,53 +272,52 @@ class PatchCore(torch.nn.Module):
                     #idx goes from 0->num_coresets
                     #building our histogram based on closest coreset to each patch
                     for batch in range(batchsize):
-                        for i, idx in enumerate(dist_idx[:,batch]):  
+                        for i, idx in enumerate(dist_idx[batch,:]):  
                             #for debugging!!!!!!
                             if idx > 9:
                                 idx = 9
                             self.histogram[i][idx] += 1 
                     
-                    #normalizing :)
-                    for i in range(len(self.histogram)):
-                        for val in self.histogram[i]:
-                            val /= sum(self.histogram[i])
-                    
                     dist_idx = dist_idx.reshape(batchsize, side_dim, side_dim)
                     
+                    c_one_hot = self.mat_to_onehot(dist_idx, num_embedded_features)
                     
-                    for row in range(side_dim):
-                        for col in range(side_dim):
+                    for row in range(1, side_dim -1):
+                        for col in range(1, side_dim-1):
+                            curr_c_one_hot = c_one_hot[:,row,col,:]
                             
-                            if row!= 0 and col!=0 and row!=side_dim-1 and col!=side_dim-1:
-                                
-                                c_one_hot = self.mat_to_onehot(dist_idx, num_embedded_features)
-                                
-                                neighbors = features[:, row-1:row+2, col-1:col+2, :]
-                                
-                                # should contain all the features of neighbours minus the current row, col features
-                                # concatinating all neighboring features on axis 1 => dims: b, 8, 1024
-                                cat_features = torch.cat((neighbors[:,0,...], 
-                                                          neighbors[:,2,...],
-                                                          neighbors[:,1,1,:][:,None,:],
-                                                          neighbors[:,1,2,:][:,None,:]), dim = 1)
-                                
-                                cat_features = cat_features.reshape(cat_features.shape[0],cat_features.shape[-2] * cat_features.shape[-1])
-                                
-                                c_pred = self.model(cat_features)
-                                
-                                loss = loss_fn(c_pred, c_one_hot)
-                                
-                                loss.backward()
-                                optim.step()
-                                
-                                accuracy = (c_pred[np.max(c_pred)] == 1) - c_one_hot
-                                
-                                losses.append(loss)
-                                accs.append(accuracy)
+                            neighbors = features[:, row-1:row+2, col-1:col+2, :]
+                            
+                            # should contain all the features of neighbours minus the current row, col features
+                            # concatinating all neighboring features on axis 1 => dims: b, 8, 1024
+                            cat_features = torch.cat((neighbors[:,0,...], 
+                                                        neighbors[:,2,...],
+                                                        neighbors[:,1,1,:][:,None,:],
+                                                        neighbors[:,1,2,:][:,None,:]), dim = 1)
+                            
+                            cat_features = cat_features.reshape(cat_features.shape[0],cat_features.shape[-2] * cat_features.shape[-1])
+                            
+                            c_pred = self.model(cat_features)
+                            
+                            loss = loss_fn(c_pred, curr_c_one_hot)
+                            
+                            loss.backward()
+                            optim.step()
+                            
+                            accuracy = (torch.argmax(c_pred, axis = 1)) - torch.argmax(curr_c_one_hot, axis = 1)
+                            
+                            losses.append(loss)
+                            accs.append(accuracy)
                             
                 print("loss: ", sum(loss)/len(loss))
                 print("accuracy:", sum(accs)/len(accs))
         
+        #normalizing histogram before exiting training:) 
+        for i in range(len(self.histogram)):
+            for val in self.histogram[i]:
+                val /= sum(self.histogram[i])
+                
+                
     def PNI_predict(self, image):
         self.model.eval()
         features, patch_shapes = self._embed(image, provide_patch_shapes=True)
@@ -377,7 +379,7 @@ class PatchCore(torch.nn.Module):
 
     def mat_to_onehot(self, data_idx, num_classes):
         b, h, w = data_idx.shape
-        c_one_hot = torch.zeros(b, h, w, num_classes)
+        c_one_hot = torch.zeros(b, h, w, num_classes).to(self.device)
         for batch in range(b):
             for row in range(h):
                 for col in range(w):
