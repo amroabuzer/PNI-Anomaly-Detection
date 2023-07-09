@@ -79,7 +79,7 @@ methods["get_dataloaders"] = {"training": train_data_module,
         'other'
     ]}
 
-n1, f1 = sampler('identity', 0.1)
+n1, f1 = sampler('identity', 0.01)
 methods[n1] =f1
 # we also pick greedy_coreset because that is what PNI paper mentions
 # 0.1 is the default value according to documentation
@@ -163,4 +163,4 @@ else:
     nn_method = model.patchcore.common.FaissNN(False, 8)
     patch_core = PatchCore(device)
     patch_core.load_from_path(file_path, device, nn_method)
-    patch_core.train_PNI(dataloader=dataloaders["training"])
+    patch_core.generate_PNI_dataset(dataloader=dataloaders["training"], csv_file=os.path.join(file_path, "PNI_dataset.csv"))

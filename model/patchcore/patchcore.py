@@ -203,9 +203,16 @@ class PatchCore(torch.nn.Module):
                 features.append(_image_to_features(image))
 
         features = np.concatenate(features, axis=0)
+        
         features = self.featuresampler.run(features)
         
-        dist_features = self.featuresampler.run(features)
+        self.cdist_sampler = model.patchcore.sampler.ApproximateGreedyCoresetSampler(
+            percentage = (2048.0 / features.shape[0]),
+            device = self.device
+        )
+
+        dist_features = self.cdist_sampler.run(features)
+        
         self.dist_to_ano_mapper = self.featuresampler._compute_greedy_coreset_indices(features)
         
         self.anomaly_scorer.fit(detection_features=[features])
@@ -216,8 +223,50 @@ class PatchCore(torch.nn.Module):
             return self._predict_dataloader(data)
         return self._predict(data)
 
-    
-    
+    def generate_PNI_dataset(self, dataloader, csv_file):
+        
+        train_dataloader = dataloader.train_dataloader()
+        
+        num_embedded_features = len(self.dist_scorer.detection_features)
+        
+        with tqdm.tqdm(train_dataloader, desc="Generating Dataset...", leave=False) as data_iterator:
+            
+                _ = self.forward_modules.eval()
+                
+                batchsize = image.shape[0]
+                
+                for image in data_iterator:
+                    
+                    for batch in batchsize:
+                        
+                        image = image.to(torch.float).to(self.device)
+                        
+                        curr_image = image[batch, ...]
+                        
+                        features, patch_shapes = self._embed(curr_image, provide_patch_shapes=True)
+                        features = np.asarray(features)
+                        
+                        side_dim = patch_shapes[0][0]
+                        
+                        # should get c_dist closest to each feature in shape of side_patch**2
+                        _, _ ,dist_idx = self.dist_scorer.predict([features]).squeeze()
+                        
+                        c_one_hot = self.mat_to_onehot(dist_idx, num_embedded_features)
+                        
+                        for row in range(1, side_dim -1):
+                            
+                            for col in range(1, side_dim-1):
+                                
+                                curr_c_one_hot = c_one_hot[:,row,col,:]
+                                
+                                neighbors = features[:, row-1:row+2, col-1:col+2, :]
+
+                                cat_features = torch.cat((neighbors[:,0,...], 
+                                                        neighbors[:,2,...],
+                                                        neighbors[:,1,1,:][:,None,:],
+                                                        neighbors[:,1,2,:][:,None,:]), dim = 1)
+                            
+
     def train_PNI(self, dataloader):
         
         train_dataloader = dataloader.train_dataloader()

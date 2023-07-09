@@ -195,7 +195,7 @@ class RescaleSegmentor:
             if isinstance(patch_scores, np.ndarray):
                 patch_scores = torch.from_numpy(patch_scores)
             _scores = patch_scores.to(self.device)
-            _scores = _scores.unsqueeze(1)
+            _scores = _scores.squeeze(1)
             _scores = F.interpolate(
                 _scores, size=self.target_size, mode="bilinear", align_corners=False
             )
