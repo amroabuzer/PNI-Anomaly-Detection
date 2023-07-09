@@ -127,7 +127,7 @@ print("sanity check")
 print("name: " + dataset_name)
 
 train_patch = False
-file_path = os.path.join('saved_PatchCore', 'Dummy_PatchCore_2')
+file_path = os.path.join('saved_PatchCore', 'Dummy_PatchCore')
 
 if train_patch:
     # with device_context:
@@ -163,4 +163,5 @@ else:
     nn_method = model.patchcore.common.FaissNN(False, 8)
     patch_core = PatchCore(device)
     patch_core.load_from_path(file_path, device, nn_method)
+    # patch_core.train_PNI(dataloader=dataloaders["training"])
     patch_core.generate_PNI_dataset(dataloader=dataloaders["training"], csv_file=os.path.join(file_path, "PNI_dataset.csv"))
