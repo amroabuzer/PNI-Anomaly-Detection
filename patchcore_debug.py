@@ -126,8 +126,8 @@ dataset_name = dataloaders["training"].name
 print("sanity check")
 print("name: " + dataset_name)
 
-train_patch = True
-file_path = os.path.join('saved_PatchCore', 'Debug_PatchCore')
+train_patch = False
+file_path = os.path.join('saved_PatchCore', 'Dummy_PatchCore_2')
 
 if train_patch:
     # with device_context:

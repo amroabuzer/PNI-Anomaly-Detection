@@ -216,12 +216,16 @@ class PatchCore(torch.nn.Module):
             return self._predict_dataloader(data)
         return self._predict(data)
 
+    
+    
     def train_PNI(self, dataloader):
         
         train_dataloader = dataloader.train_dataloader()
         
         #for debugging only:
-        train_dataloader = dataloader.val_dataloader()
+        self.dist_scorer.detection_features = self.dist_scorer.detection_features[:10] 
+        
+        num_embedded_features = len(self.dist_scorer.detection_features)
         
         self.histogram = [[0 for x in range(self.dist_scorer.detection_features.shape[0])] for x in range(784)]
         # manually putting in 28^2 since 28^2 is the number of embeddings per pic (probably changes based on size of image)
@@ -233,7 +237,7 @@ class PatchCore(torch.nn.Module):
         
         self.model.train()
         self.model.to(device=self.device)
-        optim = optim.Adam(model.parameters(), lr=0.001)
+        optim = torch.optim.Adam(self.model.parameters(), lr=0.001)
         epochs = 15
         loss_fn = nn.CrossEntropyLoss()
         val_epochs = 51
@@ -252,49 +256,62 @@ class PatchCore(torch.nn.Module):
                     features, patch_shapes = self._embed(image, provide_patch_shapes=True)
                     features = np.asarray(features)
                     
-                    side_dim = math.sqrt(features[-1][0])
-                    embed_dim = features[-1][1]
+                    side_dim = int(math.sqrt(features.shape[0]))
+                    embed_dim = features.shape[1]
                     
-                    _, _ ,dist_idx = self.dist_scorer.predict([features])[0]
+                    _, _ ,dist_idx = self.dist_scorer.predict([features])
                     
                     ## I'm supposed to get a [b, 28, 28, 1024] here
                     features = features.reshape(batchsize, side_dim, side_dim, embed_dim)
-                    
+                    features = torch.tensor(features).to(self.device)
                     
                     #i goes from 1 -> 784 
                     #idx goes from 0->num_coresets
-                    for i, idx in enumerate(dist_idx):  
-                        self.histogram[i][idx] += 1 
+                    #building our histogram based on closest coreset to each patch
+                    for batch in range(batchsize):
+                        for i, idx in enumerate(dist_idx[:,batch]):  
+                            #for debugging!!!!!!
+                            if idx > 9:
+                                idx = 9
+                            self.histogram[i][idx] += 1 
                     
                     #normalizing :)
                     for i in range(len(self.histogram)):
-                        self.histogram[i] /= sum(self.histogram[i])
+                        for val in self.histogram[i]:
+                            val /= sum(self.histogram[i])
                     
                     dist_idx = dist_idx.reshape(batchsize, side_dim, side_dim)
                     
                     
-                    for row in range(1, side_dim-1):
-                        for col in range(1, side_dim-1):
+                    for row in range(side_dim):
+                        for col in range(side_dim):
                             
-                            self.histogram[dist_idx[row, col]] += 1
-                            
-                            c_one_hot = torch.eye(1000)[dist_idx[row][col]]
-                            neighbors = features[:, row-1:row+2, col-1:col+2, :]
-                            
-                            # should contain all the features of neighbours minus the current row, col features
-                            cat_features = torch.cat(neighbors[0,:], neighbors[2,:], neighbors[1,1], neighbors[1,2], dim = 0)
-                            
-                            c_pred = self.model(cat_features)
-                            
-                            loss = loss_fn(c_pred, c_one_hot)
-                            
-                            loss.backward()
-                            optim.step()
-                            
-                            accuracy = (c_pred[np.max(c_pred)] == 1) - c_one_hot
-                            
-                            losses.append(loss)
-                            accs.append(accuracy)
+                            if row!= 0 and col!=0 and row!=side_dim-1 and col!=side_dim-1:
+                                
+                                c_one_hot = self.mat_to_onehot(dist_idx, num_embedded_features)
+                                
+                                neighbors = features[:, row-1:row+2, col-1:col+2, :]
+                                
+                                # should contain all the features of neighbours minus the current row, col features
+                                # concatinating all neighboring features on axis 1 => dims: b, 8, 1024
+                                cat_features = torch.cat((neighbors[:,0,...], 
+                                                          neighbors[:,2,...],
+                                                          neighbors[:,1,1,:][:,None,:],
+                                                          neighbors[:,1,2,:][:,None,:]), dim = 1)
+                                
+                                cat_features = cat_features.reshape(cat_features.shape[0],cat_features.shape[-2] * cat_features.shape[-1])
+                                
+                                c_pred = self.model(cat_features)
+                                
+                                loss = loss_fn(c_pred, c_one_hot)
+                                
+                                loss.backward()
+                                optim.step()
+                                
+                                accuracy = (c_pred[np.max(c_pred)] == 1) - c_one_hot
+                                
+                                losses.append(loss)
+                                accs.append(accuracy)
                             
                 print("loss: ", sum(loss)/len(loss))
                 print("accuracy:", sum(accs)/len(accs))
@@ -358,6 +375,18 @@ class PatchCore(torch.nn.Module):
                     masks.append(mask)
         return scores, masks, labels_gt, masks_gt
 
+    def mat_to_onehot(self, data_idx, num_classes):
+        b, h, w = data_idx.shape
+        c_one_hot = torch.zeros(b, h, w, num_classes)
+        for batch in range(b):
+            for row in range(h):
+                for col in range(w):
+                    if data_idx[batch][row][col] > 9:
+                        data_idx[batch][row][col] = 9
+                    c_one_hot[batch, row, col] = torch.eye(num_classes)[data_idx[batch][row][col]]
+        
+        return c_one_hot
+    
     def _predict(self, images):
         """Infer score and mask for a batch of images."""
         images = images.to(torch.float).to(self.device)
