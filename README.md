@@ -5,3 +5,4 @@
 - Use the PNI_predict (in patchcore.py) method for (obviously) predicting
 - Use the refinement_model.py which is the exact refinement architecture as the paper
 - Dataloader used here is a custom dataloader (not MVTech)
+- There is also a custom cutpaste transformation that also generates GTs
