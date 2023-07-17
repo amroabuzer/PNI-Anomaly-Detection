@@ -222,11 +222,11 @@ class PatchCore(torch.nn.Module):
         return self._predict(data)
                             
 
-    def train_PNI(self, dataloader):
+    def train_PNI(self, dataloader, path_to_PNI):
         
         train_dataloader = dataloader.train_dataloader()
         
-        #for debugging only:
+        #for debugging only we have 10 c_dists:
         self.dist_scorer.detection_features = self.dist_scorer.detection_features[:10] 
         
         num_embedded_features = len(self.dist_scorer.detection_features)
@@ -242,16 +242,16 @@ class PatchCore(torch.nn.Module):
         self.model.train()
         self.model.to(device=self.device)
         optim = torch.optim.Adam(self.model.parameters(), lr=0.001)
-        epochs = 15
+        epochs = 1
         loss_fn = nn.CrossEntropyLoss()
-        val_epochs = 51
+        val_epochs = 0
         
         with tqdm.tqdm(train_dataloader, desc="Training PNI...", leave=False) as data_iterator:
             
             for epoch in range(epochs):
                 losses = []
                 accs = []
-                for image in data_iterator:
+                for image_idx, image in enumerate(data_iterator):
                     
                     image = image.to(torch.float).to(self.device)
                     _ = self.forward_modules.eval()
@@ -312,8 +312,17 @@ class PatchCore(torch.nn.Module):
                             
                             losses.append(loss)
                             accs.append(accuracy)
-                            
-                print("loss: ", sum(loss)/len(loss))
+
+                            if image_idx > 20:
+                                print("loss: ", sum(losses)/len(losses))
+                                print("accuracy:", sum(accs)/len(accs))
+                                for i in range(len(self.histogram)):
+                                    for val in self.histogram[i]:
+                                        val /= sum(self.histogram[i])
+                                self.save_PNI(path_to_PNI)
+        
+                #check validation set here
+                print("loss: ", sum(losses)/len(losses))
                 print("accuracy:", sum(accs)/len(accs))
         
         #normalizing histogram before exiting training:) 
@@ -322,14 +331,29 @@ class PatchCore(torch.nn.Module):
                 val /= sum(self.histogram[i])
         
         #save model
-        self.save_MLP_historgram(os.path.join("MLP_histograms", "PNI_1"))
+        self.save_PNI(path_to_PNI)
 
-    def save_MLP_historgram(self, path_to_model):
+    def save_PNI(self, path_to_model):
         
         torch.save(self.model.state_dict(), os.path.join(path_to_model, "mlp.pt"))
 
         with open(os.path.join(path_to_model, "histogram.json"), "wb") as fp:
             pickle.dump(self.histogram, fp)
+    
+    def load_PNI(self, path_to_model):
+        #for debugging only!
+        self.dist_scorer.detection_features = self.dist_scorer.detection_features[:10] 
+
+
+        self.model = MLP(input_size=self.dist_scorer.detection_features.shape[1] * 8,
+                         hidden_size=2048,
+                         num_layers=10,
+                         output_size=self.dist_scorer.detection_features.shape[0])
+
+        self.model.load_state_dict(torch.load(os.path.join(path_to_model, "mlp.pt")))
+
+        with open(os.path.join(path_to_model, "histogram.json"), "rb") as fp:
+            self.histogram = pickle.load(fp)
                 
                 
     def PNI_predict(self, image):
@@ -343,7 +367,7 @@ class PatchCore(torch.nn.Module):
         embed_dim = features[-1][1]
         
         features = features.reshape(image[0], side_dim, side_dim, embed_dim)
-        
+        patch_scores = torch.zeros_like(features)
         for row in side_dim:
             for col in side_dim:
                 
@@ -359,7 +383,7 @@ class PatchCore(torch.nn.Module):
                 
                 p_cOmega = p_cN * p_cx / 2
 
-                p_cOmega = np.where(p_cOmega > threshold, 1, 0)
+                p_cOmega = torch.where(p_cOmega > threshold, 1, 0)
 
                 
                 # we have to map back to nn of c_dist i.e. to c_emb
@@ -368,13 +392,17 @@ class PatchCore(torch.nn.Module):
                 
                 self.dist_to_ano_mapper
                 
-                p_cOmega_transformed = np.zeros(self.anomaly_scorer.detection_features.shape[0])
+                p_cOmega_transformed = torch.zeros(self.anomaly_scorer.detection_features.shape[0])
                 
-                p_cOmega_transformed = np.take(p_cOmega_transformed, self.dist_to_ano_mapper)
+                p_cOmega_transformed = torch.take(p_cOmega_transformed, self.dist_to_ano_mapper)
                 
-                p_Phi_c = math.exp(-np.linalg.norm(features - c_emb))
+                p_Phi_c = math.exp(-torch.linalg.norm(features - c_emb))
                 
-                patch_score = p_Phi_c * p_cOmega_transformed
+                patch_scores[:,row, col, :] = p_Phi_c * p_cOmega_transformed
+        
+        masks = self.anomaly_segmentor.convert_to_segmentation(patch_scores)
+        
+        return [mask for mask in masks]
                 
     def _predict_dataloader(self, dataloader):
         """This function provides anomaly scores/maps for full dataloaders."""

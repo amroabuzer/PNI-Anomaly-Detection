@@ -88,7 +88,7 @@ methods[n2] = f2
 # rest of values are just default
 
 
-results_path = r"D:\D_Coding\Coding\PNI_Medical_Anomaly\results"
+results_path = "results"
 # make sure gpus is correctly used
 gpu = [0]
 seed = config["seed"]
@@ -127,7 +127,9 @@ print("sanity check")
 print("name: " + dataset_name)
 
 train_patch = False
+train_PNI = True
 file_path = os.path.join('saved_PatchCore', '2_Dummy_PatchCore')
+
 
 if train_patch:
     # with device_context:
@@ -159,9 +161,15 @@ if train_patch:
             else ""
         )
         PatchCore.save_to_path(file_path, prepend)
+elif train_PNI:
+    nn_method = model.patchcore.common.FaissNN(False, 8)
+    patch_core = PatchCore(device)
+    patch_core.load_from_path(file_path, device, nn_method)
+    patch_core.train_PNI(dataloader=dataloaders["training"], path_to_PNI=os.path.join("MLP_histograms", "PNI_1"))
+    # patch_core.generate_PNI_dataset(dataloader=dataloaders["training"], csv_file=os.path.join(file_path, "PNI_dataset.csv"))
 else:
     nn_method = model.patchcore.common.FaissNN(False, 8)
     patch_core = PatchCore(device)
     patch_core.load_from_path(file_path, device, nn_method)
-    patch_core.train_PNI(dataloader=dataloaders["training"])
-    # patch_core.generate_PNI_dataset(dataloader=dataloaders["training"], csv_file=os.path.join(file_path, "PNI_dataset.csv"))
+    patch_core.load_PNI(path_to_model=os.path.join("MLP_histograms", "PNI_1"))
+    patch_core.PNI_predict("data/fastMRI/brain_mid_png/file_brain_AXT1_201_6002688.png")
