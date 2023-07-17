@@ -34,8 +34,8 @@ dummy_array = np.ones((1,1,224,224))
 
 after_cutpaste_transform = transforms.Compose([])
 after_cutpaste_transform.transforms.append(transforms.ToTensor())
-after_cutpaste_transform.transforms.append(transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                                                std=[0.229, 0.224, 0.225]))
+# after_cutpaste_transform.transforms.append(transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                                                # std=[0.229, 0.224, 0.225]))
 
 cutpaste_type = CutPasteNormal
 
@@ -184,7 +184,8 @@ for step in tqdm(range(config['num_epochs'])):
     xs = [x.to(device) for x in data]
     gts = [y.to(device) for y in gt]
 
-
+    plt.imshow(xs[0].detach().cpu().permute(1,2,0))
+    plt.show
     # zero the parameter gradients
     optimizer.zero_grad()
     for i,x in enumerate(xs):

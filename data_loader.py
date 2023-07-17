@@ -48,11 +48,11 @@ class TrainDataset(Dataset):
         # Convert to tensor
         else:
             img = (transforms.ToTensor()(img))
-            img = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])(img)
+            # img = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])(img)
             return img
         # print(img.size)
 
-        img = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])(img)
+        # img = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])(img)
         return img, gt
 
 
@@ -136,7 +136,7 @@ class TestDataset(Dataset):
         img = Image.open(self.img_paths[idx]).convert('RGB')
         img = img.resize(self.target_size, Image.BICUBIC)
         img = transforms.ToTensor()(img)
-        img = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])(img)
+        # img = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])(img)
 
         # Load positive mask
         pos_mask = Image.open(self.pos_mask_paths[idx])
