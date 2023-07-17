@@ -220,49 +220,6 @@ class PatchCore(torch.nn.Module):
         if isinstance(data, torch.utils.data.DataLoader):
             return self._predict_dataloader(data)
         return self._predict(data)
-
-    def generate_PNI_dataset(self, dataloader, csv_file):
-        
-        train_dataloader = dataloader.train_dataloader()
-        num_embedded_features = len(self.dist_scorer.detection_features)
-        
-        csv_file = "PNI_dataset.csv"
-        
-        with tqdm.tqdm(train_dataloader, desc="Generating Dataset...", leave=False) as data_iterator:
-            
-                for image in data_iterator:
-                    
-                    image = image.to(torch.float).to(self.device)
-                    _ = self.forward_modules.eval()
-                    batchsize = image.shape[0]
-                    
-                    # for batch in range(batchsize):
-                    features, patch_shapes = self._embed(image, provide_patch_shapes=True)
-                    features = np.asarray(features)
-                        
-                    side_dim = patch_shapes[0][0]
-                    
-                    # should get c_dist closest to each feature in shape of side_patch**2
-                    _, _ ,dist_idx = self.dist_scorer.predict([features])
-                    dist_idx = dist_idx.reshape(batchsize, side_dim, side_dim)
-                    
-                    c_one_hot = self.mat_to_onehot(dist_idx, num_embedded_features)
-                    
-                    for row in range(1, side_dim -1):
-                        for col in range(1, side_dim-1):
-                            
-                            curr_c_one_hot = c_one_hot[:,row,col,:]
-                            neighbors = features[:, row-1:row+2, col-1:col+2, :]
-                            cat_features = torch.cat((neighbors[:,0,...], 
-                                                    neighbors[:,2,...],
-                                                    neighbors[:,1,1,:][:,None,:],
-                                                    neighbors[:,1,2,:][:,None,:]), dim = 1)
-
-                            np.vstack()
-                            np.vstack()
-                    
-                    np.savetxt()
-                    np.savetxt()
                             
 
     def train_PNI(self, dataloader):
