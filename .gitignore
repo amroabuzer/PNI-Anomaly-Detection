@@ -3265,3 +3265,6 @@ saved_PatchCore/Dummy_PatchCore_2/dist_nnnnscorer_search_index.faiss
 saved_PatchCore/Dummy_PatchCore_2/orig_nnnnscorer_features.pkl
 saved_PatchCore/Dummy_PatchCore_2/orig_nnnnscorer_search_index.faiss
 saved_PatchCore/Dummy_PatchCore_2/patchcore_params.pkl
+boxplots.png
+boxplots.svg
+boxplots.pdf
