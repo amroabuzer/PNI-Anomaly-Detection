@@ -246,7 +246,7 @@ class PatchCore(torch.nn.Module):
         loss_fn = nn.CrossEntropyLoss()
         val_epochs = 51
         
-        with tqdm.tqdm(train_dataloader, desc="Inferring...", leave=False) as data_iterator:
+        with tqdm.tqdm(train_dataloader, desc="Training PNI...", leave=False) as data_iterator:
             
             for epoch in range(epochs):
                 losses = []
@@ -320,10 +320,21 @@ class PatchCore(torch.nn.Module):
         for i in range(len(self.histogram)):
             for val in self.histogram[i]:
                 val /= sum(self.histogram[i])
+        
+        #save model
+        self.save_MLP_historgram(os.path.join("MLP_histograms", "PNI_1"))
+
+    def save_MLP_historgram(self, path_to_model):
+        
+        torch.save(self.model.state_dict(), os.path.join(path_to_model, "mlp.pt"))
+
+        with open(os.path.join(path_to_model, "histogram.json"), "wb") as fp:
+            pickle.dump(self.histogram, fp)
                 
                 
     def PNI_predict(self, image):
         self.model.eval()
+        threshold = 1 / (2*self.anomaly_scorer.detection_features.shape[0])
         features, patch_shapes = self._embed(image, provide_patch_shapes=True)
         
         _, _ ,dist_idx = self.anomaly_scorer.predict([features])[0] # gives me the c_emb idx for each patch 
@@ -347,6 +358,9 @@ class PatchCore(torch.nn.Module):
                 p_cx = self.histogram[row*side_dim + col]
                 
                 p_cOmega = p_cN * p_cx / 2
+
+                p_cOmega = np.where(p_cOmega > threshold, 1, 0)
+
                 
                 # we have to map back to nn of c_dist i.e. to c_emb
                 # self.dist_to_ano_mapper should be the size of c_dist and contains 
